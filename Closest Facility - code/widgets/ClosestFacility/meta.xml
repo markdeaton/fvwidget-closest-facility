@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<configuration>
+<openbydefault>false</openbydefault>
+<icon>images/i_widget.png</icon>
+<label>Closest Facilities</label>
+<description>Uses the Network Analyst "closest facility" solver</description>
+<helpurl>http://www.arcgis.com/home/item.html?id=ab815e974ccf4da98871d699a3bb8934</helpurl>
+</configuration>

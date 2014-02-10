@@ -1,0 +1,345 @@
+<?xml version="1.0" encoding="utf-8"?>
+<viewer:BaseWidget xmlns:fx="http://ns.adobe.com/mxml/2009" 
+				   xmlns:s="library://ns.adobe.com/flex/spark" 
+				   xmlns:mx="library://ns.adobe.com/flex/mx" 
+				   xmlns:viewer="com.esri.viewer.*" 
+				   layout="vertical" 
+				   widgetConfigLoaded="configLoaded()"
+				   initialize="initComponent(event)" 
+				   xmlns:esri="http://www.esri.com/2008/ags" 
+				   xmlns:extendPolylineEffect="polyline.extendPolylineEffect.*" 
+				   xmlns:line="line.*" 
+				   >
+	<fx:Script>
+	<![CDATA[
+		import com.esri.ags.FeatureSet;
+		import com.esri.ags.Graphic;
+		import com.esri.ags.events.ClosestFacilityEvent;
+		import com.esri.ags.events.DrawEvent;
+		import com.esri.ags.events.LayerEvent;
+		import com.esri.ags.events.QueryEvent;
+		import com.esri.ags.layers.GraphicsLayer;
+		import com.esri.ags.renderers.supportClasses.UniqueValueInfo;
+		import com.esri.ags.tasks.supportClasses.ClosestFacilityParameters;
+		import com.esri.ags.tools.DrawTool;
+		import com.esri.ags.utils.GraphicUtil;
+		
+		import mx.collections.ArrayCollection;
+		import mx.controls.Image;
+		import mx.events.FlexEvent;
+		import mx.rpc.events.FaultEvent;
+		
+		/********** VARS **********/
+		[Bindable]
+		private var _configXML : XML;
+		
+		[Bindable(event="updateRouteSymbols")]
+		private var m_aryClosestFacilitySymbolInfos : Array;
+		
+		[Bindable]
+		private var m_nLoadOperationsInProcess : int = 1; // 1 because facilities automatically load
+		
+		/********** FUNCTIONS **********/
+		private function enableMapNav( bEnable : Boolean ) : void {
+			map.panEnabled = map.mapNavigationEnabled 
+				= map.rubberbandZoomEnabled = map.doubleClickZoomEnabled 
+				= bEnable;
+		}
+		
+		/********** EVENT HANDLERS **********/
+		private function initComponent( event:FlexEvent ):void {
+			// Putting this in init because it doesn't draw properly in widgetTemplate_openHandler:
+			m_lyrAllFacilities.addEventListener( LayerEvent.UPDATE_END, zoomToFacilities );
+			m_lyrAllFacilities.addEventListener( LayerEvent.LOAD_ERROR, function( event:LayerEvent ):void {
+				m_nLoadOperationsInProcess--;
+				showError( "Error loading facilities:\n" + event.fault.message.toString() );				
+			} );
+			
+			map.addLayer( m_lyrAllFacilities );
+			map.addLayer( m_lyrResultRoutes );
+			map.addLayer( m_lyrBarrier );
+			map.addLayer( m_lyrEvent );
+		}
+		
+		protected function configLoaded():void {
+			if ( configXML ) {
+				_configXML = configXML;
+				
+				// Load route renderer infos array
+				m_aryClosestFacilitySymbolInfos = new Array();
+				for each ( var xmlRoute:XML in _configXML.symbology.routes.route ) {
+					var sym:SimpleLineSymbol = new SimpleLineSymbol(
+						xmlRoute.@style, xmlRoute.@color, xmlRoute.@alpha, xmlRoute.@width
+					);
+					
+					m_aryClosestFacilitySymbolInfos.push( 
+						new UniqueValueInfo( sym, xmlRoute.@rank )
+					);
+				}
+				
+				dispatchEvent( new Event( "updateRouteSymbols" ) );
+				
+				// Load incidents from specified URL, if applicable
+				var sURL:String = _configXML.incidents.url.valueOf();
+				if ( (new RegExp("^http[s]?\:\\/\\/([^\\/]+)\\/")).exec( sURL ) ) {
+					m_nLoadOperationsInProcess++;
+					m_qtIncidents.url = sURL;
+					m_qtIncidents.execute( m_qryIncidents );
+				}
+			}
+		}
+		
+		protected function wTemplate_openHandler(event:Event):void
+		{
+			if ( m_lyrAllFacilities ) 	m_lyrAllFacilities.visible = true;
+			if ( m_lyrEvent ) 			m_lyrEvent.visible = true;
+			if ( m_lyrBarrier )			m_lyrBarrier.visible = true;
+			if ( m_lyrResultRoutes )	m_lyrResultRoutes.visible = true;
+		}
+		protected function wTemplate_closedHandler(event:Event):void
+		{
+			m_lyrAllFacilities.visible = false;
+			m_lyrEvent.visible = false;
+			m_lyrBarrier.visible = false;
+			m_lyrResultRoutes.visible = false;
+		}
+		
+		private function drawEvent( event:DrawEvent ):void {			
+			m_lyrEvent.add( event.graphic );
+		}
+		
+		private function drawPolylineBarrier( event:DrawEvent ):void {
+			m_lyrBarrier.add( event.graphic );
+		}
+		
+		private function onBtnOKClick_NA( event:MouseEvent ):void {
+			m_naClosestFacilityParams.facilities = fs4gl( m_lyrAllFacilities );
+			m_naClosestFacilityParams.incidents = fs4gl( m_lyrEvent );
+			m_naClosestFacilityParams.polylineBarriers = fs4gl( m_lyrBarrier );
+			
+			m_naClosestFacility.solve( m_naClosestFacilityParams );
+		}
+		
+		private function onNASolveSucceed( result:ClosestFacilityEvent ):void {
+			var routes:Array = result.closestFacilitySolveResult.routes;
+			// Order so lowest-ranked results are added/drawn first
+			routes.sort(
+				function( g1:Graphic, g2:Graphic ):int {
+					var rank1:int = int(g1.attributes[ _configXML.symbology.routeZOrderAttrName.valueOf() ]);
+					var rank2:int = int(g2.attributes[ _configXML..symbology.routeZOrderAttrName.valueOf() ]);
+					if ( rank1 < rank2 ) return -1;
+					else if ( rank1 > rank2 ) return 1;
+					else return 0;
+				} ,
+				Array.DESCENDING 
+			);
+			
+			// Results automatically added to graphics layer via binding
+			// Auto-zoom if user desires
+			if ( chkZoomToResults.selected ) {
+				map.extent = GraphicUtil.getGraphicsExtent( routes ).expand( 1.5 );
+			}
+			
+			m_lyrResultRoutes.clear();
+			// Set all lines to not automatically come to top of Z-order upon mouse-hover
+			for ( var i:int = 0; i < routes.length; i++ ) {
+				var o:Graphic = routes[ i ];
+//				o.autoMoveToTop = false;
+				o.setStyle( "addedEffect", fxExtendLines );
+				m_lyrResultRoutes.add( o );
+			};			
+		}
+		
+		private function onNASolveFail( event:FaultEvent ):void {
+			showError( "Solve failed:\n" + event.fault.faultDetail );
+		}
+		
+		private function onLoadIncidents( event:QueryEvent ):void {
+			m_nLoadOperationsInProcess--;
+			for each ( var g:Graphic in event.featureSet.features ) {
+				g.symbol = m_lyrEvent.symbol;
+				m_lyrEvent.add( g );
+			}
+		}
+		
+		private function onLoadIncidentsFault( event:FaultEvent ):void {
+			m_nLoadOperationsInProcess--;
+			showError( event.fault.faultDetail );
+		}
+		
+		private function fs4gl( gl:GraphicsLayer ):FeatureSet {
+			return new FeatureSet( (gl.graphicProvider as ArrayCollection).toArray() );
+		}
+		
+		private function zoomToFacilities( event:LayerEvent ):void {
+			var evtLyr:FeatureLayer = event.currentTarget as FeatureLayer;			
+			map.extent = GraphicUtil.getGraphicsExtent( (evtLyr.graphicProvider as ArrayCollection).toArray() ).expand( 1.25 );
+			evtLyr.removeEventListener( LayerEvent.UPDATE_END, zoomToFacilities );
+			m_nLoadOperationsInProcess--;
+		}
+		
+		private function xmlListToStringArray( xl:XMLList ):Array {
+			var ary:Array = new Array();
+			for each ( var o:Object in xl )
+				ary.push( o.toString() );
+				
+			return ary;
+		}
+	]]>
+	</fx:Script>
+
+	<viewer:WidgetTemplate id="wTemplate" color="0xFFFFFF" open="wTemplate_openHandler(event)" closed="wTemplate_closedHandler(event)" 
+						   width="285" height="240">
+		<viewer:layout>
+			<s:VerticalLayout/>
+		</viewer:layout>
+		<mx:Grid>
+			<mx:GridRow visible="{m_nLoadOperationsInProcess &gt; 0}" includeInLayout="{m_nLoadOperationsInProcess &gt; 0}">
+				<mx:GridItem>
+					<s:HGroup>
+						<s:Label id="lblFindingFeatures" right="0" color="#FFFF00" fontWeight="normal" text="Loading data..."/>
+					</s:HGroup>
+				</mx:GridItem>
+			</mx:GridRow>
+			<mx:GridRow>
+				<mx:GridItem>
+					<mx:Label id="txtLocation" text="Navigation/Drawing Tools:" width="80%"/>
+				</mx:GridItem>
+				<mx:GridItem>
+					<!--					<mx:Image source="widgets/APL/ClosestFacility/images/i_pan.png" id="imgPan"
+					useHandCursor="true" buttonMode="true" width="20" height="20"
+					toolTip="Resume standard map navigation">
+					<mx:click>
+					<![CDATA[
+					setMapNavigation( NavigationTool.PAN, "Navigation Mode" );
+					enableMapNav(true);
+					]]>
+					</mx:click>
+					</mx:Image>-->
+					<mx:Image source="widgets/ClosestFacility/images/w_addstart.png" 
+							  useHandCursor="true" buttonMode="true" width="20" height="20"
+							  toolTip="Use this tool to add the incidents to be allocated to nearby facilities">
+						<mx:click>
+							<![CDATA[
+							setMapAction(DrawTool.MAPPOINT, 'Add Event', m_lyrEvent.symbol, drawEvent);
+							enableMapNav(false);
+							]]>
+						</mx:click>
+					</mx:Image>
+					<mx:Image source="widgets/ClosestFacility/images/i_draw_line.png" 
+							  useHandCursor="true" buttonMode="true" width="20" height="20"
+							  toolTip="Draw a traffic barrier (one click per vertex, double-click to stop)">
+						<mx:click>
+							<![CDATA[
+							setMapAction(DrawTool.POLYLINE, 'Add Barrier', m_lyrBarrier.symbol, drawPolylineBarrier);
+							enableMapNav(false);
+							]]>
+						</mx:click>
+					</mx:Image>
+				</mx:GridItem>
+			</mx:GridRow>
+			<mx:GridRow>
+				<mx:GridItem>
+					<mx:Label text="# of facilities to find:"/>
+				</mx:GridItem>
+				<mx:GridItem>
+					<mx:NumericStepper id="numFacilities" width="50" minimum="1" maximum="4" stepSize="1" value="3"/>
+				</mx:GridItem>
+			</mx:GridRow>
+			<mx:GridRow>
+				<mx:GridItem>
+					<mx:Label text="Max travel (minutes):"/>
+				</mx:GridItem>
+				<mx:GridItem>
+					<mx:NumericStepper id="numTravel" width="50" minimum="1" maximum="120" stepSize="5" value="15"/>
+				</mx:GridItem>
+			</mx:GridRow>
+			<mx:GridRow>
+				<mx:GridItem>
+					<mx:Button label="Solve" toolTip="Solve and display the results" click="onBtnOKClick_NA(event)" enabled="{ArrayCollection(m_lyrEvent.graphicProvider).length > 0}"/>
+					<mx:CheckBox id="chkZoomToResults"
+								 label="Zoom to Result"
+								 toolTip="After solving, zoom to results"/>
+				</mx:GridItem>
+				<mx:GridItem>
+					<mx:Button label="Clear" toolTip="Clear all events, barriers, and results" width="50">
+						<mx:click>
+							<![CDATA[
+							m_lyrEvent.clear();
+							m_lyrBarrier.clear();
+							m_lyrResultRoutes.clear();
+							]]>
+						</mx:click>
+					</mx:Button>
+				</mx:GridItem>
+			</mx:GridRow>
+		</mx:Grid>
+		
+		<s:Label text="Result Rank Symbols:"/>
+		<mx:Grid>
+			<mx:GridRow>
+				<mx:Repeater id="rp" dataProvider="{m_aryClosestFacilitySymbolInfos.slice( 0, numFacilities.value )}">
+					<mx:GridItem horizontalAlign="center">
+						<s:Label text="{rp.currentItem.value}"/>
+					</mx:GridItem>
+				</mx:Repeater>
+			</mx:GridRow>
+			<mx:GridRow>
+				<mx:Repeater id="rp2" dataProvider="{m_aryClosestFacilitySymbolInfos.slice( 0, numFacilities.value )}">						
+					<mx:GridItem horizontalAlign="center">
+						<mx:Canvas width="15" height="15" borderStyle="solid" borderColor="#FFFFFF" borderVisible="true" backgroundColor="{(rp2.currentItem.symbol as SimpleLineSymbol).color}"/>
+					</mx:GridItem>
+				</mx:Repeater>
+			</mx:GridRow>
+		</mx:Grid>
+	</viewer:WidgetTemplate>
+	
+	<fx:Declarations>
+		<!--==================== Graphics Layers and Symbology ====================-->
+		
+		<esri:FeatureLayer id="m_lyrAllFacilities" url="{_configXML.facilities.url}" mode="snapshot" outFields="*"/>
+		
+		<esri:GraphicsLayer id="m_lyrEvent" spatialReference="{map.spatialReference}">
+			<esri:symbol>
+				<esri:SimpleMarkerSymbol color="{_configXML.symbology.event.@markerColor}" style="{_configXML.symbology.event.@style}" size="{_configXML.symbology.event.@size}">
+					<esri:SimpleLineSymbol color="{_configXML.symbology.event.@outlineColor}" width="{_configXML.symbology.event.@outlineWidth}"/>
+				</esri:SimpleMarkerSymbol> 
+			</esri:symbol>
+		</esri:GraphicsLayer>
+		
+		<esri:GraphicsLayer id="m_lyrBarrier" spatialReference="{map.spatialReference}">
+			<esri:symbol>
+				<esri:SimpleLineSymbol color="{_configXML.symbology.barrier.@color}" width="{_configXML.symbology.barrier.@width}" style="{_configXML.symbology.barrier.@style}"/>
+			</esri:symbol>
+		</esri:GraphicsLayer>
+		
+		<esri:GraphicsLayer id="m_lyrResultRoutes" 
+							spatialReference="{map.spatialReference}">
+			<esri:renderer>
+				<esri:UniqueValueRenderer id="rendRoutes" field="{_configXML.symbology.routeRendererAttrName}" infos="{m_aryClosestFacilitySymbolInfos}"/>
+			</esri:renderer>		
+		</esri:GraphicsLayer>
+		
+		<!--==================== Tasks ====================-->
+		
+		<esri:ClosestFacilityTask id="m_naClosestFacility" 
+			  showBusyCursor="true"
+			  url="{_configXML.closestFacilitySvc.url}"
+			  fault="onNASolveFail(event)"
+			  solveComplete="onNASolveSucceed(event)"
+		  />
+		<esri:ClosestFacilityParameters id="m_naClosestFacilityParams"
+			defaultCutoff="{numTravel.value}"
+			defaultTargetFacilityCount="{numFacilities.value}"
+			outSpatialReference="{map.spatialReference}"
+			outputLines="esriNAOutputLineTrueShape"
+			returnFacilities="true"
+			accumulateAttributes="{xmlListToStringArray(_configXML.routeRequestAccumulatedAttributes.attrName)}"
+		/>
+		
+		<esri:QueryTask id="m_qtIncidents" useAMF="false" executeComplete="onLoadIncidents(event)" fault="onLoadIncidentsFault(event)"/>
+		<esri:Query id="m_qryIncidents" where="1=1" returnGeometry="true" outSpatialReference="{map.spatialReference}"/>
+		
+		<extendPolylineEffect:ExtendPolylineEffect id="fxExtendLines" duration="{_configXML.symbology.animateRoutesDuration}"/>
+	</fx:Declarations>
+</viewer:BaseWidget>
