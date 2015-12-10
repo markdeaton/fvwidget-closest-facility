@@ -1,11 +1,11 @@
 <?xml version="1.0" ?>
 <!--
-////////////////////////////////////////////////////////////////////////////////
-//
-//  Closest Facility Widget
-//   Mark Deaton, Esri Applications Prototype Lab
-//   2011-09-15
-////////////////////////////////////////////////////////////////////////////////
+		////////////////////////////////////////////////////////////////////////////////
+		//
+		//  Closest Facility Widget
+		//   Mark Deaton, Esri Applications Prototype Lab
+		//   2011-09-15
+		////////////////////////////////////////////////////////////////////////////////
 -->
 <configuration>
 <!-- 	<facilities> -->
@@ -16,6 +16,7 @@
 <!-- 	</facilities> -->
 	<facilities>
 		<url>http://sampleserver1.arcgisonline.com/ArcGIS/rest/services/Louisville/LOJIC_PublicSafety_Louisville/MapServer/3</url>
+<!-- 		<url>http://maps.esri.com/apl4/rest/services/ScooterRouting/ClosestFacility1/MapServer/1</url> -->
 	</facilities>
 
 	<incidents>
@@ -26,6 +27,7 @@
 
 	<closestFacilitySvc>
 		<url>http://sampleserver3.arcgisonline.com/ArcGIS/rest/services/Network/USA/NAServer/Closest%20Facility</url>
+<!-- 		<url>http://maps.esri.com/apl4/rest/services/ScooterRouting/ClosestFacility1/NAServer/Closest%20Facility</url> -->
 	</closestFacilitySvc>
 
 	<!-- Accumulated attributes, as defined by the network analyst service. Leave the

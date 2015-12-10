@@ -248,10 +248,11 @@
 			</mx:GridRow>
 			<mx:GridRow>
 				<mx:GridItem>
-					<mx:Label text="Max travel (minutes):"/>
+					<s:CheckBox id="chkLimitMaxTravel" label="Limit max travel (minutes):"/>
 				</mx:GridItem>
 				<mx:GridItem>
-					<mx:NumericStepper id="numTravel" width="50" minimum="1" maximum="120" stepSize="5" value="15"/>
+					<mx:NumericStepper id="numTravel" width="50" minimum="1" maximum="120" stepSize="5" value="15"
+									   enabled="{chkLimitMaxTravel.selected}"/>
 				</mx:GridItem>
 			</mx:GridRow>
 			<mx:GridRow>
@@ -329,7 +330,7 @@
 			  solveComplete="onNASolveSucceed(event)"
 		  />
 		<esri:ClosestFacilityParameters id="m_naClosestFacilityParams"
-			defaultCutoff="{numTravel.value}"
+			defaultCutoff="{chkLimitMaxTravel.selected ? numTravel.value : Number.MAX_VALUE}"
 			defaultTargetFacilityCount="{numFacilities.value}"
 			outSpatialReference="{map.spatialReference}"
 			outputLines="esriNAOutputLineTrueShape"
